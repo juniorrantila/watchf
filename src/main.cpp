@@ -7,6 +7,63 @@
 #include <Ty/StringBuffer.h>
 #include <sys/inotify.h>
 #include <stdlib.h>
+#include <pthread.h>
+#include <sys/wait.h>
+
+struct Executor {
+    static Executor& the()
+    {
+        static auto self = Executor();
+        return self;
+    }
+
+    Executor(Executor const&) = delete;
+
+    bool is_done() const
+    {
+        return m_command == nullptr;
+    }
+
+    pid_t run() const
+    {
+        c_string argv[] = {
+            "sh",
+            "-c",
+            m_command,
+            nullptr,
+        };
+        return MUST(Core::System::posix_spawnp(argv[0], argv));
+    }
+
+    ErrorOr<void> run_killing(c_string command)
+    {
+        if (!is_done()) {
+            kill(m_pid, SIGKILL);
+            set_done();
+        }
+        m_command = command;
+
+        pthread_t thread;
+        pthread_create(&thread, nullptr, [](auto* context) -> void* {
+            auto* self = (Executor*)context;
+            self->m_pid = self->run();
+            waitpid(self->m_pid, nullptr, 0);
+            self->set_done();
+            return nullptr;
+        }, this);
+        pthread_detach(thread);
+
+        return {};
+    }
+
+private:
+    Executor() = default;
+
+    void set_done() { m_command = nullptr; }
+
+    c_string m_command { nullptr };
+    pid_t m_pid { -1 };
+};
 
 ErrorOr<int> Main::main(int argc, c_string argv[])
 {
@@ -62,7 +119,7 @@ ErrorOr<int> Main::main(int argc, c_string argv[])
     struct inotify_event event;
     while (true) {
         read(notifier, &event, sizeof(event));
-        system(command);
+        TRY(Executor::the().run_killing(command));
     }
 
     return 0;
