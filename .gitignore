@@ -1,0 +1,9 @@
+.DS_Store
+a.*
+build
+perf.data
+perf.data.old
+test.c
+test.he
+playground/*
+!playground/README.md
