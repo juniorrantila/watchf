@@ -45,6 +45,8 @@ struct StringView {
 
     constexpr bool is_empty() const { return size == 0; }
 
+    explicit constexpr operator bool() const { return !is_empty(); }
+
     constexpr char const& operator[](u32 index) const
     {
         return data[index];
