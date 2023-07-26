@@ -96,6 +96,13 @@ ErrorOr<int> Main::main(int argc, c_string argv[])
             MUST(files_to_watch.append(path));
         }));
 
+    bool print_header = true;
+    TRY(argument_parser.add_flag("--no-header"sv, "-nh"sv,
+        "don't print header"sv,
+        [&]{
+            print_header = false;
+        }));
+
     c_string command = nullptr;
     TRY(argument_parser.add_positional_argument("command"sv,
         [&](auto argument) {
@@ -112,13 +119,15 @@ ErrorOr<int> Main::main(int argc, c_string argv[])
         return Error::from_string_literal("must watch at least one file");
     }
 
-    TRY(Core::File::stderr().writeln("Files:"sv));
-    for (auto const* file : files_to_watch) {
-        TRY(Core::File::stderr().writeln("    "sv,
-            StringView::from_c_string(file)));
+    if (print_header) {
+        TRY(Core::File::stderr().writeln("Files:"sv));
+        for (auto const* file : files_to_watch) {
+            TRY(Core::File::stderr().writeln("    "sv,
+                StringView::from_c_string(file)));
+        }
+        TRY(Core::File::stderr().writeln("Command: "sv,
+            StringView::from_c_string(command)));
     }
-    TRY(Core::File::stderr().writeln("Command: "sv,
-        StringView::from_c_string(command)));
 
 #if has_inotify
     auto notifier = inotify_init();
