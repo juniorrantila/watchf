@@ -134,6 +134,8 @@ ErrorOr<int> Main::main(int argc, c_string argv[])
     struct inotify_event event;
     while (true) {
         read(notifier, &event, sizeof(event));
+        if (StringView::from_c_string(command).is_empty())
+            return 0;
         TRY(Executor::the().run_killing(command));
     }
 #elif has_kqueue
@@ -151,9 +153,15 @@ ErrorOr<int> Main::main(int argc, c_string argv[])
     }
 
     while (true) {
-        if (kevent(notifier, events.data(), (int)events.size(), 0, 0, 0) < 0) {
+        struct kevent event;
+        if (kevent(notifier, events.data(), (int)events.size(), &event, 1, 0) < 0) {
             return Error::from_errno();
         }
+        if ((event.flags & EV_ERROR) > 0) {
+            return Error::from_errno((int)event.data);
+        }
+        if (StringView::from_c_string(command).is_empty())
+            return 0;
         TRY(Executor::the().run_killing(command));
     }
 #else
