@@ -125,8 +125,8 @@ ErrorOr<int> Main::main(int argc, c_string argv[])
             TRY(Core::File::stderr().writeln("    "sv,
                 StringView::from_c_string(file)));
         }
-        TRY(Core::File::stderr().writeln("Command: "sv,
-            StringView::from_c_string(command)));
+        auto command_view = StringView::from_c_string(command) ?: "\"\""sv;
+        TRY(Core::File::stderr().writeln("Command: "sv, command_view));
     }
 
 #if has_inotify
