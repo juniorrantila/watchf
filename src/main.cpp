@@ -5,10 +5,22 @@
 #include <Core/System.h>
 #include <Main/Main.h>
 #include <Ty/StringBuffer.h>
-#include <sys/inotify.h>
 #include <stdlib.h>
 #include <pthread.h>
 #include <sys/wait.h>
+#include <signal.h>
+#include <fcntl.h>
+
+#if __has_include(<sys/inotify.h>)
+#define has_inotify 1
+#include <sys/inotify.h>
+#elif __has_include(<sys/event.h>)
+#define has_kqueue 1
+#include <sys/event.h>
+#else
+#error "unimplemented"
+#endif
+
 
 struct Executor {
     static Executor& the()
@@ -96,16 +108,8 @@ ErrorOr<int> Main::main(int argc, c_string argv[])
         return 1;
     }
 
-    auto notifier = inotify_init();
-    auto watch_fds = TRY(Vector<int>::create(files_to_watch.size()));
-    for (u32 i = 0; i < files_to_watch.size(); i++) {
-        auto stat = TRY(Core::System::stat(files_to_watch[i]));
-        if (!stat.is_regular())
-            return Error::from_string_literal("can only watch regular files");
-        auto fd = inotify_add_watch(notifier, files_to_watch[i], IN_CLOSE_WRITE);
-        if (fd < 0)
-            return Error::from_errno();
-        watch_fds.unchecked_append(fd);
+    if (files_to_watch.is_empty()) {
+        return Error::from_string_literal("must watch at least one file");
     }
 
     TRY(Core::File::stderr().writeln("Files:"sv));
@@ -116,12 +120,45 @@ ErrorOr<int> Main::main(int argc, c_string argv[])
     TRY(Core::File::stderr().writeln("Command: "sv,
         StringView::from_c_string(command)));
 
+#if has_inotify
+    auto notifier = inotify_init();
+    for (u32 i = 0; i < files_to_watch.size(); i++) {
+        auto stat = TRY(Core::System::stat(files_to_watch[i]));
+        if (!stat.is_regular())
+            return Error::from_string_literal("can only watch regular files");
+        auto fd = inotify_add_watch(notifier, files_to_watch[i], IN_CLOSE_WRITE);
+        if (fd < 0)
+            return Error::from_errno();
+    }
+
     struct inotify_event event;
     while (true) {
         read(notifier, &event, sizeof(event));
         TRY(Executor::the().run_killing(command));
     }
+#elif has_kqueue
+    auto notifier = kqueue();
+    auto events = TRY(Vector<struct kevent>::create(files_to_watch.size()));
+    for (u32 i = 0; i < files_to_watch.size(); i++) {
+        auto fd = TRY(Core::System::open(files_to_watch[i], O_RDONLY));
+        events.unchecked_append({
+            .ident = (uintptr_t)fd,
+            .filter = EVFILT_VNODE,
+            .flags = EV_ADD | EV_ONESHOT,
+            .fflags = NOTE_WRITE,
+            .udata = 0
+        });
+    }
 
+    while (true) {
+        if (kevent(notifier, events.data(), (int)events.size(), 0, 0, 0) < 0) {
+            return Error::from_errno();
+        }
+        TRY(Executor::the().run_killing(command));
+    }
+#else
+#error "unimplemented"
+#endif
     return 0;
 }
 
