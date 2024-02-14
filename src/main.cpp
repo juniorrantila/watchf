@@ -21,62 +21,6 @@
 #error "unimplemented"
 #endif
 
-
-struct Executor {
-    static Executor& the()
-    {
-        static auto self = Executor();
-        return self;
-    }
-
-    Executor(Executor const&) = delete;
-
-    bool is_done() const
-    {
-        return m_command == nullptr;
-    }
-
-    pid_t run() const
-    {
-        c_string argv[] = {
-            "sh",
-            "-c",
-            m_command,
-            nullptr,
-        };
-        return MUST(Core::System::posix_spawnp(argv[0], argv));
-    }
-
-    ErrorOr<void> run_killing(c_string command)
-    {
-        if (!is_done()) {
-            kill(m_pid, SIGKILL);
-            set_done();
-        }
-        m_command = command;
-
-        pthread_t thread;
-        pthread_create(&thread, nullptr, [](auto* context) -> void* {
-            auto* self = (Executor*)context;
-            self->m_pid = self->run();
-            waitpid(self->m_pid, nullptr, 0);
-            self->set_done();
-            return nullptr;
-        }, this);
-        pthread_detach(thread);
-
-        return {};
-    }
-
-private:
-    Executor() = default;
-
-    void set_done() { m_command = nullptr; }
-
-    c_string m_command { nullptr };
-    pid_t m_pid { -1 };
-};
-
 ErrorOr<int> Main::main(int argc, c_string argv[])
 {
     auto argument_parser = CLI::ArgumentParser();
@@ -145,7 +89,7 @@ ErrorOr<int> Main::main(int argc, c_string argv[])
         read(notifier, &event, sizeof(event));
         if (StringView::from_c_string(command).is_empty())
             return 0;
-        TRY(Executor::the().run_killing(command));
+        waitpid(MUST(Core::System::posix_spawnp(argv[0], argv)), nullptr, 0);
     }
 #elif has_kqueue
     auto notifier = kqueue();
@@ -171,7 +115,13 @@ ErrorOr<int> Main::main(int argc, c_string argv[])
         }
         if (StringView::from_c_string(command).is_empty())
             return 0;
-        TRY(Executor::the().run_killing(command));
+        c_string argv[] = {
+            "sh",
+            "-c",
+            command,
+            nullptr,
+        };
+        waitpid(MUST(Core::System::posix_spawnp(argv[0], argv)), nullptr, 0);
     }
 #else
 #error "unimplemented"
